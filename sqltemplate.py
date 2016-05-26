@@ -1,79 +1,100 @@
 
 from functools import wraps
-class SqlQuery():
-    def __init__(self,sql_snippets,params):
-        current_param = None
-        sql_query = []
-        sql_params = []
-        for c in sql_snippets:
-            if c == "{":
-                current_param = []
-            elif c == "}":
-                sql_params.append(params["".join(current_param)])
-                sql_query.append("?")
-                current_param = None
+
+def exec_params(sql_snippets,params):
+    current_param = None
+    sql_query = []
+    sql_params = []
+    for c in sql_snippets:
+        if c == "{":
+            current_param = []
+        elif c == "}":
+            sql_params.append(params["".join(current_param)])
+            sql_query.append("?")
+            current_param = None
+        else:
+            if current_param is None:
+                sql_query.append(c)
             else:
-                if current_param is None:
-                    sql_query.append(c)
-                else:
-                    current_param.append(c)
-    
-        self.query = "".join(sql_query)
-        self.params = sql_params
-    def exec_params(self):
-        return self.query,self.params
-class SqlBuffer():
+                current_param.append(c)
+
+    return ("".join(sql_query),sql_params)
+class Relation(str):
+    """Relation is indetented well parenthesated string formuala"""
+    pass
+def AND(*snippets,indent=2):
+    return REL("AND",*snippets,indent=indent)
+def OR(*snippets,indent=2):
+    return REL("OR",*snippets,indent=indent)
+def REL(rel,*snippets,indent=2):
+    indent = " "*indent
+    result =[]
+    result.append('(')
+
+    for i,snippet in enumerate(snippets):
+
+        if i != 0:
+            result.append(indent+rel)
+        if isinstance(snippet,Relation):
+            for s in snippet.split("\n"):
+                result.append(indent+s)
+        else:
+            result.append(indent+'('+snippet+")")
+
+
+
+    r = ("\n").join(result)+"\n)"
+    #print("RESULT",rel,":")
+    #print(r)
+    #print("END")
+
+    return Relation(r)
+class SqlQueryBuffer():
     def __init__(self):
         self.snippets = []
     def __call__(self,snippet):
         self.snippets.append(snippet)
-    def AND(self,*snippets):
-        self.REL("AND",*snippets)
-    def OR(self,*snippets):
-        self.REL("OR",*snippets)
-    def REL(self,rel,*snippets):
-        self.snippets.append('(')
-        for i,snippet in enumerate(snippets):
-            if i != 0:
-                self.snippets.append(rel)
-            self.snippets.append('('+snippet+')')
-            
-        self.snippets.append(')')
-                            
-    def freeze(self,params):
-        return SqlQuery("\n".join(self.snippets),params)
-def sql(query):
-    
-    @wraps(query)
-    def wrapper(**params):
-        sql_buffer = SqlBuffer()
-        query(sql_buffer,**params)
-        return sql_buffer.freeze(params)
-    return wrapper
+
+    def freeze(self,**params):
+        return exec_params("\n".join(self.snippets),params)
 
 
 if __name__ == "__main__":
 
-    @sql
-    def query1(sql,**params):
-        sql("SELECT * FROM")
-        if params["table_one"] == True:
-            sql("table_one")
-        else:
-            sql("table_two")
-        sql("WHERE")
-        sql.AND("name LIKE {query} OR registred={registred}",
-                "address LIKE '%@gmail.com'")
-    
 
-    expected ="""SELECT * FROM
-table_one
+    def query_users(users,query,registred):
+        q = SqlQueryBuffer()
+        q("SELECT name, email FROM")
+        if users == True:
+            q("users")
+        else:
+            q("admin")
+        q("WHERE")
+        q(OR(
+            AND("name LIKE {query} OR registred={registred}",
+                "address LIKE '%@gmail.com'"),
+            "1=0")
+        )
+        return q.freeze(registred=registred,
+                        query=query)
+    expected ="""SELECT name, email FROM
+users
 WHERE
 (
-(name LIKE ? OR registred=?)
-AND
-(address LIKE '%@gmail.com')
+  (
+    (name LIKE ? OR registred=?)
+    AND
+    (address LIKE '%@gmail.com')
+  )
+  OR
+  (1=0)
 )"""
-    print( query1(table_one=True,query="% Dupont",registred=1).exec_params(),"\n",repr(expected))
-    assert query1(table_one=True,query="% Dupont",registred=1).exec_params() == (
+    r= query_users(users=True,query="% Dupont",registred=1)
+    print(r[0])
+    print("comparing")
+    print(r)
+
+    print(repr(expected))
+
+    assert query_users(users=True,query="% Dupont",registred=1) == (
         (expected,["% Dupont",1]))
